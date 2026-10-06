@@ -12,16 +12,32 @@ import QuickAddModal from './components/QuickAddModal';
 import UnscramblerModal from './components/UnscramblerModal';
 import PomodoroModal from './components/PomodoroModal';
 import ExportModal from './components/ExportModal';
+import AuthModal from './components/AuthModal';
 
 import { INITIAL_DEADLINES, INITIAL_COURSES } from './data/mockData';
+import { DEMO_STUDENTS } from './data/mockUsers';
 import { getUrgencyInfo } from './utils/dateUtils';
 import './App.css';
 
 export default function App() {
-  // Persistence in LocalStorage
+  // Current Student Account State
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('campusconnect_active_user');
+      return saved ? JSON.parse(saved) : DEMO_STUDENTS[0];
+    } catch (e) {
+      return DEMO_STUDENTS[0];
+    }
+  });
+
+  // Account-isolated storage key
+  const storageKey = currentUser ? `campusconnect_deadlines_${currentUser.id}` : 'campusconnect_deadlines_guest';
+
+  // Persistence in LocalStorage for current account
   const [deadlines, setDeadlines] = useState(() => {
     try {
-      const saved = localStorage.getItem('campusconnect_deadlines');
+      const initialKey = currentUser ? `campusconnect_deadlines_${currentUser.id}` : 'campusconnect_deadlines_guest';
+      const saved = localStorage.getItem(initialKey);
       return saved ? JSON.parse(saved) : INITIAL_DEADLINES;
     } catch (e) {
       return INITIAL_DEADLINES;
@@ -29,6 +45,39 @@ export default function App() {
   });
 
   const [courses] = useState(INITIAL_COURSES);
+
+  // Switch deadlines when account changes
+  useEffect(() => {
+    if (!currentUser) return;
+    try {
+      const userKey = `campusconnect_deadlines_${currentUser.id}`;
+      const saved = localStorage.getItem(userKey);
+      if (saved) {
+        setDeadlines(JSON.parse(saved));
+      } else {
+        setDeadlines(INITIAL_DEADLINES);
+        localStorage.setItem(userKey, JSON.stringify(INITIAL_DEADLINES));
+      }
+    } catch (e) {}
+  }, [currentUser]);
+
+  // Sync active user with localStorage
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        localStorage.setItem('campusconnect_active_user', JSON.stringify(currentUser));
+      } else {
+        localStorage.removeItem('campusconnect_active_user');
+      }
+    } catch (e) {}
+  }, [currentUser]);
+
+  // Sync deadlines for active user with local storage
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(deadlines));
+    } catch (e) {}
+  }, [deadlines, storageKey]);
 
   // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
@@ -51,13 +100,6 @@ export default function App() {
     localStorage.setItem('campusconnect_dark', JSON.stringify(darkMode));
   }, [darkMode]);
 
-  // Sync deadlines with local storage
-  useEffect(() => {
-    try {
-      localStorage.setItem('campusconnect_deadlines', JSON.stringify(deadlines));
-    } catch (e) {}
-  }, [deadlines]);
-
   // Filter & Search Controls
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -68,6 +110,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState('list'); // list, calendar, courses, kanban
 
   // Modals state
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [isUnscramblerOpen, setIsUnscramblerOpen] = useState(false);
@@ -77,7 +120,6 @@ export default function App() {
 
   // Calculated Stats
   const stats = useMemo(() => {
-    const now = new Date();
     let overdue = 0;
     let dueToday = 0;
     let dueThisWeek = 0;
@@ -111,7 +153,6 @@ export default function App() {
     const pendingItems = deadlines.filter(d => d.status !== 'Completed');
     if (pendingItems.length === 0) return null;
 
-    // Sort by due date ascending
     return [...pendingItems].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))[0];
   }, [deadlines]);
 
@@ -211,9 +252,9 @@ export default function App() {
   };
 
   const handleResetSampleData = () => {
-    if (confirm('Reset to initial sample campus deadlines?')) {
+    if (confirm('Reset account to initial sample campus deadlines?')) {
       setDeadlines(INITIAL_DEADLINES);
-      localStorage.removeItem('campusconnect_deadlines');
+      localStorage.setItem(storageKey, JSON.stringify(INITIAL_DEADLINES));
     }
   };
 
@@ -222,11 +263,22 @@ export default function App() {
     setIsPomodoroOpen(true);
   };
 
+  const handleLoginSuccess = (userObj) => {
+    setCurrentUser(userObj);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 flex flex-col">
       
       {/* Top Navbar */}
       <Navbar
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onLogout={handleLogout}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
         onOpenQuickAdd={() => { setEditingDeadline(null); setIsQuickAddOpen(true); }}
@@ -320,14 +372,20 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>CampusConnect &copy; 2026 • 4-Hour Hackathon Problem Statement #4</span>
+          <span>CampusConnect &copy; 2026 • Problem Statement #4</span>
           <span className="font-semibold text-slate-700 dark:text-slate-300">
-            Smart Deadline & Academic Calendar Hub
+            {currentUser ? `Active Student: ${currentUser.name} (${currentUser.studentId})` : 'Guest Mode'}
           </span>
         </div>
       </footer>
 
       {/* Modals */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onLoginSuccess={handleLoginSuccess}
+      />
+
       <QuickAddModal
         isOpen={isQuickAddOpen}
         onClose={() => setIsQuickAddOpen(false)}
